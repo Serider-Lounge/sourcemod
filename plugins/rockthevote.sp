@@ -47,12 +47,19 @@ public Plugin myinfo =
 	url = "http://www.sourcemod.net/"
 };
 
-ConVar g_Cvar_Needed;
-ConVar g_Cvar_MinPlayers;
-ConVar g_Cvar_InitialDelay;
-ConVar g_Cvar_Interval;
-ConVar g_Cvar_ChangeTime;
-ConVar g_Cvar_RTVPostVoteAction;
+enum
+{
+	rtv_needed,
+	rtv_minplayers,
+	rtv_initialdelay,
+	rtv_interval,
+	rtv_changetime,
+	rtv_postvoteaction,
+
+	MAX_CONVARS
+}
+
+ConVar g_ConVars[MAX_CONVARS];
 
 bool g_RTVAllowed = false;	// True if RTV is available to players. Used to delay rtv votes.
 int g_Voters = 0;				// Total voters connected. Doesn't include fake clients.
@@ -67,14 +74,15 @@ public void OnPluginStart()
 	LoadTranslations("common.phrases");
 	LoadTranslations("rockthevote.phrases");
 	
-	g_Cvar_Needed = CreateConVar("sm_rtv_needed", "0.60", "Percentage of players needed to rockthevote (Def 60%)", 0, true, 0.05, true, 1.0);
-	g_Cvar_MinPlayers = CreateConVar("sm_rtv_minplayers", "0", "Number of players required before RTV will be enabled.", 0, true, 0.0, true, float(MAXPLAYERS));
-	g_Cvar_InitialDelay = CreateConVar("sm_rtv_initialdelay", "30.0", "Time (in seconds) before first RTV can be held", 0, true, 0.00);
-	g_Cvar_Interval = CreateConVar("sm_rtv_interval", "240.0", "Time (in seconds) after a failed RTV before another can be held", 0, true, 0.00);
-	g_Cvar_ChangeTime = CreateConVar("sm_rtv_changetime", "0", "When to change the map after a succesful RTV: 0 - Instant, 1 - RoundEnd, 2 - MapEnd", _, true, 0.0, true, 2.0);
-	g_Cvar_RTVPostVoteAction = CreateConVar("sm_rtv_postvoteaction", "0", "What to do with RTV's after a mapvote has completed. 0 - Allow, success = instant change, 1 - Deny", _, true, 0.0, true, 1.0);
+	g_ConVars[rtv_needed] 		  = CreateConVar("sm_rtv_needed", "0.60", "Percentage of players needed to rockthevote (Def 60%)", 0, true, 0.05, true, 1.0);
+	g_ConVars[rtv_minplayers] 	  = CreateConVar("sm_rtv_minplayers", "0", "Number of players required before RTV will be enabled.", 0, true, 0.0, true, float(MAXPLAYERS));
+	g_ConVars[rtv_initialdelay]	  = CreateConVar("sm_rtv_initialdelay", "30.0", "Time (in seconds) before first RTV can be held", 0, true, 0.00);
+	g_ConVars[rtv_interval] 	  = CreateConVar("sm_rtv_interval", "240.0", "Time (in seconds) after a failed RTV before another can be held", 0, true, 0.00);
+	g_ConVars[rtv_changetime] 	  = CreateConVar("sm_rtv_changetime", "0", "When to change the map after a succesful RTV: 0 - Instant, 1 - RoundEnd, 2 - MapEnd", _, true, 0.0, true, 2.0);
+	g_ConVars[rtv_postvoteaction] = CreateConVar("sm_rtv_postvoteaction", "0", "What to do with RTV's after a mapvote has completed. 0 - Allow, success = instant change, 1 - Deny", _, true, 0.0, true, 1.0);
 	
 	RegConsoleCmd("sm_rtv", Command_RTV);
+	RegAdminCmd("sm_forcertv", Command_ForceRTV, ADMFLAG_CHANGEMAP);
 	
 	AutoExecConfig(true, "rtv");
 
@@ -101,7 +109,7 @@ public void OnMapEnd()
 
 public void OnConfigsExecuted()
 {
-	CreateTimer(g_Cvar_InitialDelay.FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
+	CreateTimer(g_ConVars[rtv_initialdelay].FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
 public void OnClientConnected(int client)
@@ -109,7 +117,7 @@ public void OnClientConnected(int client)
 	if (!IsFakeClient(client))
 	{
 		g_Voters++;
-		g_VotesNeeded = RoundToCeil(float(g_Voters) * g_Cvar_Needed.FloatValue);
+		g_VotesNeeded = RoundToCeil(float(g_Voters) * g_ConVars[rtv_needed].FloatValue);
 	}
 }
 
@@ -124,15 +132,15 @@ public void OnClientDisconnect(int client)
 	if (!IsFakeClient(client))
 	{
 		g_Voters--;
-		g_VotesNeeded = RoundToCeil(float(g_Voters) * g_Cvar_Needed.FloatValue);
+		g_VotesNeeded = RoundToCeil(float(g_Voters) * g_ConVars[rtv_needed].FloatValue);
 	}
 	
 	if (g_Votes && 
 		g_Voters && 
 		g_Votes >= g_VotesNeeded && 
-		g_RTVAllowed ) 
+		g_RTVAllowed) 
 	{
-		if (g_Cvar_RTVPostVoteAction.IntValue == 1 && HasEndOfMapVoteFinished())
+		if (g_ConVars[rtv_postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished())
 		{
 			return;
 		}
@@ -170,9 +178,18 @@ public Action Command_RTV(int client, int args)
 	return Plugin_Handled;
 }
 
+public Action Command_ForceRTV(int client, int args)
+{
+	StartRTV();
+	
+	ReplyToCommand(client, "[SM] %t", "RTV Started");
+	
+	return Plugin_Handled;
+}
+
 void AttemptRTV(int client)
 {
-	if (!g_RTVAllowed || (g_Cvar_RTVPostVoteAction.IntValue == 1 && HasEndOfMapVoteFinished()))
+	if (!g_RTVAllowed || (g_ConVars[rtv_postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished()))
 	{
 		ReplyToCommand(client, "[SM] %t", "RTV Not Allowed");
 		return;
@@ -184,7 +201,7 @@ void AttemptRTV(int client)
 		return;
 	}
 	
-	if (GetClientCount(true) < g_Cvar_MinPlayers.IntValue)
+	if (GetClientCount(true) < g_ConVars[rtv_minplayers].IntValue)
 	{
 		ReplyToCommand(client, "[SM] %t", "Minimal Players Not Met");
 		return;			
@@ -245,13 +262,13 @@ void StartRTV()
 	
 	if (CanMapChooserStartVote())
 	{
-		MapChange when = view_as<MapChange>(g_Cvar_ChangeTime.IntValue);
+		MapChange when = view_as<MapChange>(g_ConVars[rtv_changetime].IntValue);
 		InitiateMapChooserVote(when);
 		
 		ResetRTV();
 		
 		g_RTVAllowed = false;
-		CreateTimer(g_Cvar_Interval.FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
+		CreateTimer(g_ConVars[rtv_interval].FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
 	}
 }
 
